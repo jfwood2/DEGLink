@@ -1,0 +1,159 @@
+# Load packages
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(pheatmap)
+library(ggplot2)
+library(ggridges)
+library(forcats)
+library(grid)
+library(cowplot)
+library(grid)
+# === 1. Load DEG data === #
+deg_2d <- read.csv("2DayCVB_3Col_hgnc.csv")      # Replace with actual filename
+deg_5d <- read.csv("5DayCVB_3Col_hgnc.csv")      # Replace with actual filename
+deg_df <- full_join(deg_2d, deg_5d, by = "hgnc_id", suffix = c("_2Day", "_5Day"))
+
+# Ensure column names are clean
+colnames(deg_2d) <- c("hgnc_id", "logFC_2Day", "pval_2Day")
+colnames(deg_5d) <- c("hgnc_id", "logFC_5Day", "pval_5Day")
+
+# Join by gene symbol
+deg_df <- full_join(deg_2d, deg_5d, by = "hgnc_id")
+
+# === 2. Top pathways setup === #
+top_n <- 75
+top_deg1 <- gsea_deg1@result %>% arrange(p.adjust) %>% head(top_n)
+top_deg2 <- gsea_deg2@result %>% arrange(p.adjust) %>% head(top_n)
+
+#Pathway truncation
+#top_deg1$Description <- substr(top_deg1$Description, 1, 80)
+#top_deg2$Description <- substr(top_deg2$Description, 1, 80)
+
+shared_pathways <- intersect(top_deg1$Description, top_deg2$Description)
+
+shared_deg1 <- gsea_deg1@result %>%
+  filter(Description %in% shared_pathways) %>%
+  select(Description, NES, core_enrichment) %>%
+  mutate(Timepoint = "2 dpi")
+
+shared_deg2 <- gsea_deg2@result %>%
+  filter(Description %in% shared_pathways) %>%
+  select(Description, NES, core_enrichment) %>%
+  mutate(Timepoint = "5 dpi")
+
+# === 3. Heatmap data === #
+combined_nes <- bind_rows(shared_deg1, shared_deg2) %>%
+  select(Description, NES, Timepoint) %>%
+  pivot_wider(names_from = Timepoint, values_from = NES) %>%
+  column_to_rownames("Description")
+
+combined_nes <- combined_nes[order(combined_nes$`2 dpi`, decreasing = TRUE), ]
+
+heatmap_grob <- grid::grid.grabExpr(pheatmap(
+  combined_nes,
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  color = colorRampPalette(c("blue", "white", "red"))(50),
+  main = "",
+  angle_col = 0,  # Rotate column names
+  fontsize_row = 20,  # Reduce the size of row labels if necessary
+  fontsize_col = 20,  # Reduce the size of column labels
+  border_color = NA,
+  treeheight_row = 70,
+  plot.margin = margin(10, 10, 10, 150),
+  legend = FALSE,  # Ensure legend is visible
+  legend.title = "NES",  # Add a title for the legend
+  legend.label = TRUE,   # Enable legend labels
+  legend.cex = 1.5,      # Increase the size of the legend text
+  legend.height = 8,     # Adjust legend height if necessary
+  legend.width = 4       # Adjust legend width if necessary
+))
+
+grid::editGrob(heatmap_grob, gPath("guide-box"), gp = gpar(fontsize = 30))  # Modify legend size
+
+
+# === 4. Ridge Plot Prep Function === #
+extract_gene_logfc <- function(gsea_df, logfc_column) {
+  gsea_df %>%
+    separate_rows(core_enrichment, sep = "/") %>%
+    rename(hgnc_id = core_enrichment) %>%
+    left_join(deg_df, by = "hgnc_id") %>%
+    select(Description, hgnc_id, all_of(logfc_column)) %>%
+    rename(logFC = all_of(logfc_column))
+}
+
+ridge_data_2d <- extract_gene_logfc(shared_deg1, "logFC_2Day")
+ridge_data_5d <- extract_gene_logfc(shared_deg2, "logFC_5Day")
+
+# Combine 2d and 5d ridge data
+ridge_data_2d$Timepoint <- "2 dpi"
+ridge_data_5d$Timepoint <- "5 dpi"
+ridge_combined_df <- bind_rows(ridge_data_2d, ridge_data_5d)
+
+# Restrict to top pathways (same order as heatmap)
+top_shared <- rownames(combined_nes)
+ridge_combined_df <- ridge_combined_df %>%
+  filter(Description %in% top_shared) %>%
+  mutate(Description = factor(Description, levels = rev(top_shared)))  # match heatmap order
+
+# Plot
+ridge_plot <- ggplot(ridge_combined_df, aes(x = logFC, y = Description, fill = Timepoint)) +
+  geom_density_ridges(alpha = 0.9, scale = 3.2, rel_min_height = 0.04) +
+  theme_minimal(base_size = 10) +
+  scale_fill_manual(values = c("2 dpi" = "#4575b4", "5 dpi" = "#d73027")) +
+  theme(
+    axis.title.y = element_text(size = 40, color = "black"),  # Set y-axis title color
+    axis.text.y = element_text(size = 20, angle = 0, hjust = 1, color = "black"),  # Set y-axis text color
+    axis.text.x = element_text(size = 20, color = "black"),  # Set x-axis text color
+    plot.title = element_text(size = 18, face = "bold", color = "black"),  # Set plot title color
+    plot.margin = margin(10, 10, 10, 150),  # Add more space to the left side for the y-axis labels
+    legend.title = element_text(size = 20),  # Increase the size of legend title
+    legend.text = element_text(size = 20),   # Increase the size of legend text
+    legend.key.size = unit(1.5, "cm"),  # Increase the size of the legend key
+    legend.key.width = unit(1.5, "cm"),  # Increase the width of the legend key
+    legend.position = c(0.95, 0.95),  # Place legend inside at top-right corner
+    legend.background = element_rect(fill = "transparent", color = NA)
+  ) +
+  labs(
+    title = "",
+    x = "Log2 Fold Change",
+    y = NULL
+  ) +
+  guides(fill = guide_legend(title = "Timepoint"))  # Add legend title
+
+
+
+# === 5. NES Ridge Plot === #
+nes_df <- combined_nes %>%
+  rownames_to_column("Pathway") %>%
+  pivot_longer(cols = c(`2 dpi`, `5 dpi`), names_to = "Timepoint", values_to = "NES")
+
+ridge_nes <- ggplot(nes_df, aes(x = NES, y = Timepoint, fill = Timepoint)) +
+  geom_density_ridges(alpha = 0.8) +
+  theme_minimal() +
+  labs(title = "C: NES Score Distribution", x = "Normalized Enrichment Score", y = NULL) +
+  scale_fill_manual(values = c("2 dpi" = "#4575b4", "5 dpi" = "#d73027")) +
+  theme(legend.position = "none")
+
+# === 7. Final Figure === #
+# Combine the ridge plot and heatmap into one figure
+combined_plot <- plot_grid(
+  ridge_plot,         # Ridge plot goes on the left
+  heatmap_grob,       # Heatmap goes on the right
+  labels = c("", ""), # You can change the labels if needed
+  ncol = 2,           # Arrange the plots in 1 row, 2 columns
+  rel_widths = c(1, 1)  # Adjust the relative width of the plots (heatmap will be slightly wider)
+)
+
+# Save the combined figure as PNG
+ggsave("Combined_Figure.pdf", plot = combined_plot, width = 36, height = 18, units = "in", dpi = 2000)
+
+# Save
+ggsave("GSEA Heatmap.pdf", plot = heatmap_grob, width = 24, height = 18, units = "in", dpi = 1200)
+# Save ridge plot separately with better dimensions
+ggsave("GSEA_ridge_with_labels_and_pval.pdf", plot = ridge_plot, width = 16, height = 22, units = "in", dpi = 1200)
+
+

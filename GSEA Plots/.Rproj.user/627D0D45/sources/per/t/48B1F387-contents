@@ -1,0 +1,53 @@
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+library(tibble)
+# Run your existing GSEA first
+# ...
+
+# Get top N shared pathways based on 2-day results
+top_n <- 200
+top_deg1 <- gsea_deg1@result %>% arrange(p.adjust) %>% head(top_n)
+top_deg2 <- gsea_deg2@result %>% arrange(p.adjust) %>% head(top_n)
+
+# Truncate to improve labeling (optional)
+top_deg1$Description <- substr(top_deg1$Description, 1, 50)
+top_deg2$Description <- substr(top_deg2$Description, 1, 50)
+
+# Find shared pathways
+shared_pathways <- intersect(top_deg1$Description, top_deg2$Description)
+
+# Filter for shared pathways
+shared_deg1 <- gsea_deg1@result %>%
+  filter(Description %in% shared_pathways) %>%
+  select(Description, NES) %>%
+  mutate(Timepoint = "2-Day")
+
+shared_deg2 <- gsea_deg2@result %>%
+  filter(Description %in% shared_pathways) %>%
+  select(Description, NES) %>%
+  mutate(Timepoint = "5-Day")
+
+# Combine and pivot to wide format
+combined_nes <- bind_rows(shared_deg1, shared_deg2) %>%
+  pivot_wider(names_from = Timepoint, values_from = NES) %>%
+  column_to_rownames("Description")
+
+# Optional: sort by 2-Day NES for order
+combined_nes <- combined_nes[order(combined_nes$`2-Day`, decreasing = TRUE), ]
+
+# Create heatmap
+pheatmap(
+  combined_nes,
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  color = colorRampPalette(c("blue", "white", "red"))(50),
+  main = "2 vs. 5 dpi GSEA Shared Pathway Comparison Heatmap",
+  angle_col = 45,
+  fontsize_row = 5,
+  fontsize_col = 12,
+  border_color = NA
+)
+

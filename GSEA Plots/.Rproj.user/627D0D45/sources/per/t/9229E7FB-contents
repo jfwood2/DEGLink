@@ -1,0 +1,59 @@
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(ggplot2)
+
+# Load your DEG data
+deg1 <- read.csv("2DayCVB_3Col_hgnc.csv")  # Replace with your actual file path
+deg2 <- read.csv("5DayCVB_3Col_hgnc.csv")  # Replace with your actual file path
+
+# Prepare ranked list for GSEA
+deg1_ranked <- deg1[order(deg1$logFC, decreasing = TRUE), ]
+deg2_ranked <- deg2[order(deg2$logFC, decreasing = TRUE), ]
+
+# Create named vectors for GSEA
+deg1_gsea <- setNames(deg1_ranked$logFC, deg1_ranked$hgnc_id)
+deg2_gsea <- setNames(deg2_ranked$logFC, deg2_ranked$hgnc_id)
+
+# Perform GSEA
+gsea_deg1 <- gseGO(deg1_gsea, OrgDb = org.Hs.eg.db, keyType = "SYMBOL", ont = "BP")
+gsea_deg2 <- gseGO(deg2_gsea, OrgDb = org.Hs.eg.db, keyType = "SYMBOL", ont = "BP")
+
+# Top N pathways
+top_n <- 30  # Number of top pathways you want to compare
+
+# Truncate pathway labels for clarity (if too long)
+gsea_deg1@result$Description <- substr(gsea_deg1@result$Description, 1, 50)  # Truncate to 50 characters
+gsea_deg2@result$Description <- substr(gsea_deg2@result$Description, 1, 50)  # Truncate to 50 characters
+
+# Create the ridge plot for DEG1 with more space and rotated pathway labels
+p1 <- ridgeplot(gsea_deg1, showCategory = top_n) + 
+  ggtitle("Ridge Plot for DEG1") +
+  theme(text = element_text(size = 5),  # Further reduce overall text size
+        plot.title = element_text(size = 12),  # Adjust plot title size
+        axis.text = element_text(size = 5),    # Adjust axis text size
+        axis.title = element_text(size = 7),   # Adjust axis title size
+        strip.text = element_text(size = 4, angle = 45),  # Further reduce size and rotate pathway labels
+        plot.margin = margin(25, 25, 25, 25),   # Increase margins to avoid clipping
+        legend.text = element_text(size = 12),    # Increase legend text size
+        legend.title = element_text(size = 16))  # Increase legend title size
+
+# Create the ridge plot for DEG2 with adjusted color scale and more space
+p2 <- ridgeplot(gsea_deg2, showCategory = top_n) + 
+  ggtitle("Ridge Plot for DEG2") +
+  scale_fill_gradientn(colours = c("blue", "purple", "red"), 
+                       values = scales::rescale(c(min(deg2_gsea), 0, max(deg2_gsea)))) +  # Adjust color scale to cover the range of values
+  theme(text = element_text(size = 5),  # Further reduce overall text size
+        plot.title = element_text(size = 12),  # Adjust plot title size
+        axis.text = element_text(size = 5),    # Adjust axis text size
+        axis.title = element_text(size = 7),   # Adjust axis title size
+        strip.text = element_text(size = 4, angle = 45),  # Further reduce size and rotate pathway labels
+        plot.margin = margin(25, 25, 25, 25),   # Increase margins to avoid clipping
+        legend.text = element_text(size = 12),    # Increase legend text size
+        legend.title = element_text(size = 16))  # Increase legend title size
+
+# Save the ridge plot for DEG1 with an even larger image size (longer for titles)
+ggsave("DEG1_ridgeplot.png", p1, width = 21, height = 20, dpi = 600)
+
+# Save the ridge plot for DEG2 with an even larger image size and adjusted color scale
+ggsave("DEG2_ridgeplot.png", p2, width = 21, height = 20, dpi = 600)
